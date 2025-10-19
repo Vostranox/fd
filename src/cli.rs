@@ -289,6 +289,14 @@ pub struct Opts {
         )]
     exact_depth: Option<usize>,
 
+    /// Sort the output by depth
+    #[arg(
+        long = "sort-by-depth",
+        help = "Sort results by directory depth (shallowest first)",
+        long_help = "Sort results by directory depth, showing entries closest to the search root first."
+    )]
+    pub sort_by_depth: bool,
+
     /// Exclude files/directories that match the given glob pattern. This
     /// overrides any other ignore logic. Multiple exclude patterns can be
     /// specified.

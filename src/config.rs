@@ -55,6 +55,9 @@ pub struct Config {
     /// The minimum depth for reported entries, or `None`.
     pub min_depth: Option<usize>,
 
+    /// "Sort results by directory depth (shallowest first)"
+    pub sort_by_depth: bool,
+
     /// Whether to stop traversing into matching directories.
     pub prune: bool,
 
