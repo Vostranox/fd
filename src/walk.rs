@@ -281,8 +281,8 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
     /// Stop looping.
     fn stop(&mut self) -> Result<(), ExitCode> {
         if self.config.sort_by_depth {
-            self.buffer.sort_by_key(|entry| {
-                entry.path().to_string_lossy().matches(&self.config.actual_path_separator).count()
+            self.buffer.sort_by_cached_key(|entry| {
+                entry.path().components().count()
             });
         } else {
             self.buffer.sort();
