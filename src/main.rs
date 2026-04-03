@@ -18,7 +18,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{CommandFactory, Parser};
 use globset::GlobBuilder;
 use lscolors::LsColors;
@@ -245,9 +245,18 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
     let command = extract_command(&mut opts, colored_output)?;
     let has_command = command.is_some();
 
+    let full_path_base = if opts.full_path {
+        Some(env::current_dir().context(
+            "Could not determine current directory. \
+             This is required for --full-path.",
+        )?)
+    } else {
+        None
+    };
+
     Ok(Config {
         case_sensitive,
-        search_full_path: opts.full_path,
+        full_path_base,
         ignore_hidden: !(opts.hidden || opts.rg_alias_ignore()),
         read_fdignore: !(opts.no_ignore || opts.rg_alias_ignore()),
         read_vcsignore: !(opts.no_ignore || opts.rg_alias_ignore() || opts.no_ignore_vcs),
@@ -327,6 +336,7 @@ fn construct_config(mut opts: Opts, pattern_regexps: &[String]) -> Result<Config
         actual_path_separator,
         max_results: opts.max_results(),
         strip_cwd_prefix: opts.strip_cwd_prefix(|| !(opts.null_separator || has_command)),
+        ignore_contain: opts.ignore_contain,
     })
 }
 
