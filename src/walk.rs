@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::mem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -17,7 +17,6 @@ use regex::bytes::Regex;
 
 use crate::config::Config;
 use crate::dir_entry::DirEntry;
-use crate::error::print_error;
 use crate::exec;
 use crate::exit_codes::{ExitCode, merge_exitcodes};
 use crate::filesystem;
@@ -226,7 +225,7 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
                         }
                         WorkerResult::Error(err) => {
                             if self.config.show_filesystem_errors {
-                                print_error(err.to_string());
+                                print_error!("{}", err);
                             }
                         }
                     }
@@ -253,7 +252,7 @@ impl<'a, W: Write> ReceiverBuffer<'a, W> {
         if let Err(e) = output::print_entry(&mut self.stdout, entry, self.config)
             && e.kind() != ::std::io::ErrorKind::BrokenPipe
         {
-            print_error(format!("Could not write to output: {e}"));
+            print_error!("Could not write to output: {}", e);
             return Err(ExitCode::GeneralError);
         }
 
@@ -381,7 +380,7 @@ impl WorkerState {
                 match result {
                     Some(ignore::Error::Partial(_)) => (),
                     Some(err) => {
-                        print_error(format!("Malformed pattern in global ignore file. {err}."));
+                        print_error!("Malformed pattern in global ignore file. {}.", err);
                     }
                     None => (),
                 }
@@ -393,7 +392,7 @@ impl WorkerState {
             match result {
                 Some(ignore::Error::Partial(_)) => (),
                 Some(err) => {
-                    print_error(format!("Malformed pattern in custom ignore file. {err}."));
+                    print_error!("Malformed pattern in custom ignore file. {}.", err);
                 }
                 None => (),
             }
@@ -488,34 +487,24 @@ impl WorkerState {
                 }
                 let entry = match entry {
                     Ok(e) => DirEntry::normal(e),
-                    Err(ignore::Error::WithPath {
-                        path,
-                        err: inner_err,
-                    }) => match inner_err.as_ref() {
-                        ignore::Error::Io(io_error)
-                            if io_error.kind() == io::ErrorKind::NotFound
-                                && path
-                                    .symlink_metadata()
-                                    .ok()
-                                    .is_some_and(|m| m.file_type().is_symlink()) =>
-                        {
-                            DirEntry::broken_symlink(path)
-                        }
-                        _ => {
-                            return match tx.send(WorkerResult::Error(ignore::Error::WithPath {
+                    Err(err) => {
+                        // The depth has to be read off the error before it is
+                        // taken apart, since it is recorded on an inner variant.
+                        let depth = err.depth();
+                        match err {
+                            ignore::Error::WithPath {
                                 path,
                                 err: inner_err,
-                            })) {
-                                Ok(_) => WalkState::Continue,
-                                Err(_) => WalkState::Quit,
-                            };
+                            } if is_broken_symlink(&path, &inner_err) => {
+                                DirEntry::broken_symlink(path, depth)
+                            }
+                            err => {
+                                return match tx.send(WorkerResult::Error(err)) {
+                                    Ok(_) => WalkState::Continue,
+                                    Err(_) => WalkState::Quit,
+                                };
+                            }
                         }
-                    },
-                    Err(err) => {
-                        return match tx.send(WorkerResult::Error(err)) {
-                            Ok(_) => WalkState::Continue,
-                            Err(_) => WalkState::Quit,
-                        };
                     }
                 };
 
@@ -667,6 +656,21 @@ impl WorkerState {
     }
 }
 
+/// Whether a walk error is really a broken symlink rather than a failure worth
+/// reporting.
+///
+/// A symlink whose target is missing is surfaced by the walker as a NotFound
+/// error against the link's own path, so it never arrives as an entry. fd still
+/// wants to match and print it (see issue #1017), which means recovering it here.
+fn is_broken_symlink(path: &Path, err: &ignore::Error) -> bool {
+    err.io_error()
+        .is_some_and(|io_error| io_error.kind() == io::ErrorKind::NotFound)
+        && path
+            .symlink_metadata()
+            .ok()
+            .is_some_and(|m| m.file_type().is_symlink())
+}
+
 fn search_str_for_entry<'a>(
     entry_path: &'a std::path::Path,
     full_path_base: Option<&std::path::Path>,
@@ -737,6 +741,22 @@ mod tests {
         assert_eq!(
             search_str_for_entry(Path::new("./foo/bar"), None),
             PathBuf::from("bar")
+        );
+    }
+
+    #[test]
+    fn search_str_no_base_dir_with_plain_relative_path() {
+        assert_eq!(
+            search_str_for_entry(Path::new("foo/bar"), None),
+            PathBuf::from("bar")
+        );
+    }
+
+    #[test]
+    fn search_str_no_base_dir_with_file_in_current_dir() {
+        assert_eq!(
+            search_str_for_entry(Path::new("foo"), None),
+            PathBuf::from("foo")
         );
     }
 }
